@@ -56,12 +56,32 @@ SUPPORT_TEXT = (
 # ---- Menu ----
 # category -> { item_name: price }
 MENU = {
-    "Whisky, Vodka, Wine & Beer": {
-        "Whisky": 55,
-        "Vodka": 45,
-        "Wine": 35,
-        "Beer Crate 6": 35,
-        "Tequila": 45,
+    "Whiskey": {
+        "Black Label": 60,
+        "Jameson": 55,
+        "Jack Daniel's No. 7": 50,
+    },
+    "Vodka": {
+        "Absolut Vodka": 45,
+        "Tito's Handmade": 50,
+        "Grey Goose": 55,
+        "Pink Whitney": 40,
+    },
+    "Tequila": {
+        "El Jimador Blanco": 60,
+        "818 Tequila Blanco": 50,
+    },
+    "Wine": {
+        "Josh Cellars": 35,
+        "Decoy Cabernet": 45,
+    },
+    "Beer Pack 6": {
+        "Corona": 30,
+        "Budweiser": 35,
+        "Modelo": 35,
+    },
+    "Jagermeister": {
+        "Jagermeister": 50,
     },
 }
 

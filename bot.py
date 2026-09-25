@@ -62,7 +62,13 @@ def category_keyboard():
         buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="home")])
         return InlineKeyboardMarkup(buttons)
 
-    buttons = [[InlineKeyboardButton(cat, callback_data=f"cat|{cat}")] for cat in config.MENU]
+    categories = list(config.MENU.keys())
+    buttons = []
+    for i in range(0, len(categories), 2):
+        row = []
+        for cat in categories[i:i + 2]:
+            row.append(InlineKeyboardButton(cat, callback_data=f"cat|{cat}"))
+        buttons.append(row)
     buttons.append([InlineKeyboardButton("🛒 Checkout", callback_data="checkout")])
     buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="home")])
     return InlineKeyboardMarkup(buttons)
