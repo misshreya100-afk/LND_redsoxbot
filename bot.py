@@ -105,6 +105,65 @@ def cart_text(cart):
     return "\n".join(lines)
 
 
+ORDER_STATUS_LABELS = {
+    "PENDING": "Pending",
+    "CONFIRMED": "Confirmed",
+    "PREPARING": "Preparing",
+    "OUT_FOR_DELIVERY": "Out for delivery",
+    "DELIVERED": "Delivered",
+}
+
+
+def build_tracking_message(order):
+    order_id = order.get("id")
+    status = (order.get("status") or "PENDING").upper()
+    label = ORDER_STATUS_LABELS.get(status, status.replace("_", " ").title())
+    total = order.get("total", 0)
+    items = order.get("items", "N/A")
+    address = order.get("address", "N/A")
+    phone = order.get("phone", "N/A")
+    return (
+        f"*Order #{order_id}*\n"
+        f"Status: {label} ({status})\n"
+        f"Items: {items}\n"
+        f"Total: {config.CURRENCY}{total}\n"
+        f"Address: {address}\n"
+        f"Phone: {phone}\n"
+        f"Use this order number for tracking or delivery updates."
+    )
+
+
+def build_customer_delivery_update(order, status):
+    order_id = order.get("id")
+    status_key = (status or "PENDING").upper()
+    label = ORDER_STATUS_LABELS.get(status_key, status_key.replace("_", " ").title())
+    items = order.get("items", "N/A")
+    total = order.get("total", 0)
+    address = order.get("address", "N/A")
+
+    if status_key == "DELIVERED":
+        headline = f"🚚 Your order #{order_id} has been delivered."
+        body = "Thanks for ordering from LND — Late Night Delivery. Enjoy!"
+    elif status_key == "OUT_FOR_DELIVERY":
+        headline = f"🛵 Your order #{order_id} is on the way."
+        body = "Our rider is heading to your address now."
+    elif status_key == "PREPARING":
+        headline = f"🧾 Your order #{order_id} is being prepared."
+        body = "We’re getting your order ready and will update you again soon."
+    else:
+        headline = f"📦 Your order #{order_id} is now {label}."
+        body = "We’ll keep you posted with the next update."
+
+    return (
+        f"{headline}\n\n"
+        f"Order details:\n"
+        f"Items: {items}\n"
+        f"Total: {config.CURRENCY}{total}\n"
+        f"Delivery address: {address}\n\n"
+        f"{body}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Handlers — general
 # ---------------------------------------------------------------------------
@@ -159,6 +218,24 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"#{o['id']} — {o['status']} — {config.CURRENCY}{o['total']} — {o['created_at']}")
         text = "*Your recent orders:*\n" + "\n".join(lines)
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+
+
+async def track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /track <order_id>")
+        return
+    try:
+        order_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Order ID must be a number.")
+        return
+
+    order = db.get_order(order_id)
+    if not order:
+        await update.message.reply_text(f"No order found with ID #{order_id}.")
+        return
+
+    await update.message.reply_text(build_tracking_message(order), parse_mode="Markdown")
 
 
 # ---------------------------------------------------------------------------
@@ -339,8 +416,63 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not orders:
         await update.message.reply_text("No pending orders. 🎉")
         return
-    lines = [f"#{o['id']} | {o['status']} | {config.CURRENCY}{o['total']} | {o['items']} | 📍{o['address']} | 📱{o['phone']}" for o in orders]
-    await update.message.reply_text("\n\n".join(lines))
+
+    lines = [
+        f"🧾 Order #{o['id']}\n"
+        f"Status: {ORDER_STATUS_LABELS.get((o['status'] or 'PENDING').upper(), o['status'])}\n"
+        f"Items: {o['items']}\n"
+        f"Total: {config.CURRENCY}{o['total']}\n"
+        f"Address: {o['address']}\n"
+        f"Phone: {o['phone']}"
+        for o in orders
+    ]
+    await update.message.reply_text("\n\n---\n\n".join(lines), parse_mode="Markdown")
+
+
+async def admin_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /status <order_id> <PENDING|CONFIRMED|PREPARING|OUT_FOR_DELIVERY|DELIVERED>")
+        return
+    try:
+        order_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Order ID must be a number.")
+        return
+
+    status = context.args[1].upper()
+    allowed_statuses = {"PENDING", "CONFIRMED", "PREPARING", "OUT_FOR_DELIVERY", "DELIVERED"}
+    if status not in allowed_statuses:
+        await update.message.reply_text("Invalid status. Use: PENDING, CONFIRMED, PREPARING, OUT_FOR_DELIVERY, DELIVERED")
+        return
+
+    db.update_status(order_id, status)
+    order = db.get_order(order_id)
+    await update.message.reply_text(f"Order #{order_id} updated to {status} ✅")
+
+    if order:
+        try:
+            await context.bot.send_message(
+                chat_id=order["user_id"],
+                text=build_customer_delivery_update(order, status),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            log.warning(f"Could not notify customer status: {e}")
+
+        alert_chat_id = config.ORDER_ALERTS_CHAT_ID or config.ADMIN_CHAT_ID
+        if alert_chat_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=alert_chat_id,
+                    text=(
+                        f"📣 Order #{order_id} updated to *{ORDER_STATUS_LABELS.get(status, status)}*"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                log.warning(f"Could not notify order alerts group: {e}")
 
 
 async def admin_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -357,7 +489,8 @@ async def admin_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=order["user_id"],
-                text=f"🛵 Your order #{order_id} has been delivered! Enjoy — thanks for ordering from {config.BRAND_NAME}."
+                text=build_customer_delivery_update(order, "DELIVERED"),
+                parse_mode="Markdown",
             )
         except Exception as e:
             log.warning(f"Could not notify customer: {e}")
@@ -427,6 +560,8 @@ def main():
     app.add_handler(CallbackQueryHandler(my_orders, pattern="^myorders$"))
 
     app.add_handler(CommandHandler("orders", admin_orders))
+    app.add_handler(CommandHandler("track", track_order))
+    app.add_handler(CommandHandler("status", admin_update_status))
     app.add_handler(CommandHandler("done", admin_done))
     app.add_handler(CommandHandler("broadcast", broadcast))
 
